@@ -1,3 +1,5 @@
+//Greedy algorithm
+
 #include <stdio.h>
 #include <vector>
 #include <algorithm>

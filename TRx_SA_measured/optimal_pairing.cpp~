@@ -19,8 +19,8 @@
 
 using namespace std;
 
-//tuning cost of aligning wl1 and wl2 with given wavelength grid
-double tuning_dist(vector<double> wl1, vector<double> wl2, double channel_spacing)
+//tuning distance of aligning wl1 and wl2 with given wavelength grid
+double TuningDistWL(vector<double> wl1, vector<double> wl2, double channel_spacing)
 {
     double left_WL = -1.0;
 //    printf("%d\n", (int)wl1.size());
@@ -44,10 +44,10 @@ double tuning_dist(vector<double> wl1, vector<double> wl2, double channel_spacin
 }
 
 //Tuning cost with TRx1 and TRx2, each with 5x2 = 10 wavelengths 
-double dist(vector<double> wl1, vector<double> wl2, double channel_spacing)
+double TuningDistTRx(vector<double> wl1, vector<double> wl2, double channel_spacing)
 {
    // return abs(wl1[0] - wl2[0]);
-    return tuning_dist(vector<double> (wl1.begin(), wl1.begin() + CHAN_NUM), vector<double> (wl2.begin() + CHAN_NUM, wl2.end()), channel_spacing) + tuning_dist(vector<double> (wl1.begin() + CHAN_NUM, wl1.end()), vector<double> (wl2.begin(), wl2.begin() + CHAN_NUM), channel_spacing);
+    return TuningDistWL(vector<double> (wl1.begin(), wl1.begin() + CHAN_NUM), vector<double> (wl2.begin() + CHAN_NUM, wl2.end()), channel_spacing) + TuningDistWL(vector<double> (wl1.begin() + CHAN_NUM, wl1.end()), vector<double> (wl2.begin(), wl2.begin() + CHAN_NUM), channel_spacing);
 }
 
 //Calculate the cost for the given assignment
@@ -74,42 +74,10 @@ void PrintAssignDetail(const vector< pair<int, int> >& assignment, const vector<
 	
 }
 
-
-int main(int argc, char** argv)
+vector< vector<double> >  ReadWLFromFile(const char* filename, int TRX_NUM)
 {
-    //Configuration parameters
-    int TRX_NUM = 31;
-    double channel_spacing = 0.64*2; //0.64 nm for 80 GHz channel spacing
-	double lambda1 = 1.0;
-//  double wl0 = 1310; //center wavelength
-//  double wl_std = 0.2;
-	
-	vector< vector<double> > TRx_WLs(TRX_NUM, vector<double> (CHAN_NUM*2,0));
-//    TRX_NUM = atoi(argv[1]);
-   // CHAN_NUM = atoi(argv[2]);
-
-    //Randomly generate the WLs
-/*    normal_distribution<double> norm_dist(0.0, wl_std);
-    default_random_engine rng;
-
-    printf("Synthetic WLs:\n");
-
-    for(int i = 0; i < TRX_NUM; i++)
-    {
-        printf("Device#%d:", i);
-        for(int j = 0; j < CHAN_NUM; j++)
-        {
-            TRx_WLs[i][j] = wl0 + channel_spacing*j + norm_dist(rng);
-            TRx_WLs[i][j + CHAN_NUM] = wl0 + channel_spacing*j + norm_dist(rng);
-        
-            printf("%f\t", TRx_WLs[i][j]);
-        }
-        printf("\n");
-    }
-*/
-
-	//Read the WLs
-	FILE* fp = fopen("../160G_WLs.csv", "rt");
+	 vector< vector<double> > TRx_WLs(TRX_NUM, vector<double> (CHAN_NUM*2,0));
+	FILE* fp = fopen(filename, "rt");
 	for(int i = 0; i < TRX_NUM; i++)
 	{
 		for(int j = 0; j < CHAN_NUM*2 - 1; j++)
@@ -122,37 +90,74 @@ int main(int argc, char** argv)
 	}
 	fclose(fp);	
 
+	return TRx_WLs;
+}
 
+
+int main(int argc, char** argv)
+{
+    //Configuration parameters
+    int TRX_NUM = 31;
+    double channel_spacing = 0.64*2; //0.64 nm for 80 GHz channel spacing
+	double lambda1 = 0.0;
+//  double wl0 = 1310; //center wavelength
+//  double wl_std = 0.2;
+	
+	//Read the WLs
+	vector< vector<double> > TRx_WLs = ReadWLFromFile("../160G_WLs.csv", TRX_NUM);
+
+	//Generate the cost matrix
     vector< vector<double> > costMat(TRX_NUM, vector<double> (TRX_NUM, 0));
     vector<bool> usedFlag(TRX_NUM, false);
 
-    //Generate the cost matrix
     for(int i = 0; i < TRX_NUM; i++)
     {
         for(int j = 0; j < TRX_NUM; j++)
         {
             if(i == j) continue;
-            costMat[i][j] = dist(TRx_WLs[i], TRx_WLs[j], channel_spacing);
+            costMat[i][j] = TuningDistTRx(TRx_WLs[i], TRx_WLs[j], channel_spacing);
         }
     }
 
+	//The greedy algorithm
+	//Use its result as the initial assignment for the SA algorithm
+	vector< pair<int, int> > assignment (floor(TRX_NUM/2.0), pair<int, int> (-1, -1));
+	pair<int, int> currPair (-1,-1);
+    double min_cost = 1e8;
+	printf("Initial assignment from greedy algorithm:\n");
+    for(int k = 0; k < floor(TRX_NUM/2); k++)
+    {
+        min_cost = 1e8;
+        for(int i = 0; i < TRX_NUM; i++)
+        {
+            if(usedFlag[i]) continue;
+            for(int j = 0; j < TRX_NUM; j++)
+            {
+                if(i == j || usedFlag[j]) continue;
+                if(costMat[i][j] < min_cost)
+                {
+                    min_cost = costMat[i][j];
+                    currPair.first = i;
+                    currPair.second = j;
+                }
+            }
+        }
+		usedFlag[currPair.first] = true;
+		usedFlag[currPair.second] = true;
+		assignment[k] = currPair;
+           
+        printf("(%d, %d): %f\n", currPair.first + 1, currPair.second + 1, min_cost, channel_spacing);
+    }
+	//PrintAssignDetail(assignment, costMat);
+	double initCost = AssignCost(assignment, costMat, lambda1);
+
 	//The simulated annealing algorithm
 	int pair_num = floor(TRX_NUM/2.0);
-	vector< pair<int, int> > assignment (floor(TRX_NUM/2.0), pair<int, int> (-1, -1));
-	//Initial assignment
-	double cost0 = 0; //the previous-state cost
+	double cost0 = initCost; //the previous-state cost
 	double cost1 = 0; //the current-state cost
-	for(int i = 0; i < assignment.size(); i++)
-	{
-		assignment[i].first = 2*i;
-		assignment[i].second = 2*i + 1;
-//		printf("%f\n", costMat[assignment[i].first][assignment[i].second]);
-	}
-	cost0 = AssignCost(assignment, costMat, lambda1);
-	double initialAssignCost = cost0;
 	
-	double kT = cost0*0.5;			//Initial temperature for the SA algorithm
-	double kT_scale_rate = 0.9;	//Cooling rate
+	double kT = initCost*0.5;		//Initial temperature for the SA algorithm
+	double kT_scale_rate = 0.9;		//Cooling rate
 	int loops_per_temp = 10000;		//Loop number for each temperature to reach equilibrium
 	double E_min_per_temp0 = cost0;
 	double E_min_per_temp1 = cost0;
@@ -250,7 +255,7 @@ int main(int argc, char** argv)
 
 	}
 
-	printf("Initial cost: %lf\n", initialAssignCost);
+	printf("Initial cost: %lf\n", initCost);
 	printf("Global min cost: %lf\n", E_min_global);
 	printf("Optimal assignment:\n");
 	PrintAssignDetail(assignment_optimal, costMat);	
@@ -258,3 +263,26 @@ int main(int argc, char** argv)
 
     return 0;	
 }
+
+
+    //Randomly generate the WLs
+/*    normal_distribution<double> norm_dist(0.0, wl_std);
+    default_random_engine rng;
+
+    printf("Synthetic WLs:\n");
+
+    for(int i = 0; i < TRX_NUM; i++)
+    {
+        printf("Device#%d:", i);
+        for(int j = 0; j < CHAN_NUM; j++)
+        {
+            TRx_WLs[i][j] = wl0 + channel_spacing*j + norm_dist(rng);
+            TRx_WLs[i][j + CHAN_NUM] = wl0 + channel_spacing*j + norm_dist(rng);
+        
+            printf("%f\t", TRx_WLs[i][j]);
+        }
+        printf("\n");
+    }
+*/
+
+
