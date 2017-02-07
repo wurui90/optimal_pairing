@@ -76,8 +76,13 @@ void PrintAssignDetail(const vector< pair<int, int> >& assignment, const vector<
 
 vector< vector<double> >  ReadWLFromFile(const char* filename, int TRX_NUM)
 {
-	 vector< vector<double> > TRx_WLs(TRX_NUM, vector<double> (CHAN_NUM*2,0));
+	vector< vector<double> > TRx_WLs(TRX_NUM, vector<double> (CHAN_NUM*2,0));
 	FILE* fp = fopen(filename, "rt");
+	if(!fp)
+	{
+		printf("Open file failure\n");
+		return TRx_WLs;
+	}
 	for(int i = 0; i < TRX_NUM; i++)
 	{
 		for(int j = 0; j < CHAN_NUM*2 - 1; j++)
@@ -93,22 +98,10 @@ vector< vector<double> >  ReadWLFromFile(const char* filename, int TRX_NUM)
 	return TRx_WLs;
 }
 
-
-int main(int argc, char** argv)
+vector< vector<double> > GenerateCostMat(const vector< vector<double> >& TRx_WLs, double channel_spacing)
 {
-    //Configuration parameters
-    int TRX_NUM = 31;
-    double channel_spacing = 0.64*2; //0.64 nm for 80 GHz channel spacing
-	double lambda1 = 0.0;
-//  double wl0 = 1310; //center wavelength
-//  double wl_std = 0.2;
-	
-	//Read the WLs
-	vector< vector<double> > TRx_WLs = ReadWLFromFile("../160G_WLs.csv", TRX_NUM);
-
-	//Generate the cost matrix
-    vector< vector<double> > costMat(TRX_NUM, vector<double> (TRX_NUM, 0));
-    vector<bool> usedFlag(TRX_NUM, false);
+	int TRX_NUM = TRx_WLs.size();
+	vector< vector<double> > costMat(TRX_NUM, vector<double> (TRX_NUM, 0));
 
     for(int i = 0; i < TRX_NUM; i++)
     {
@@ -119,12 +112,16 @@ int main(int argc, char** argv)
         }
     }
 
-	//The greedy algorithm
-	//Use its result as the initial assignment for the SA algorithm
+	return costMat;
+}
+
+vector< pair<int, int>> AssignGreedy(const vector< vector<double> >& costMat)
+{
+	int TRX_NUM = costMat.size();
 	vector< pair<int, int> > assignment (floor(TRX_NUM/2.0), pair<int, int> (-1, -1));
 	pair<int, int> currPair (-1,-1);
     double min_cost = 1e8;
-	printf("Initial assignment from greedy algorithm:\n");
+    vector<bool> usedFlag(TRX_NUM, false);
     for(int k = 0; k < floor(TRX_NUM/2); k++)
     {
         min_cost = 1e8;
@@ -146,9 +143,31 @@ int main(int argc, char** argv)
 		usedFlag[currPair.second] = true;
 		assignment[k] = currPair;
            
-        printf("(%d, %d): %f\n", currPair.first + 1, currPair.second + 1, min_cost, channel_spacing);
+    //    printf("(%d, %d): %f\n", currPair.first + 1, currPair.second + 1, min_cost, channel_spacing);
     }
-	//PrintAssignDetail(assignment, costMat);
+	return assignment;
+}
+
+
+int main(int argc, char** argv)
+{
+    //Configuration parameters
+    int TRX_NUM = 31;
+    double channel_spacing = 0.64*2; //0.64 nm for 80 GHz channel spacing
+	double lambda1 = 0.0;
+//  double wl0 = 1310; //center wavelength
+//  double wl_std = 0.2;
+	
+	//Read the WLs
+	vector< vector<double> > TRx_WLs = ReadWLFromFile("../160G_WLs.csv", TRX_NUM);
+
+	//Generate the cost matrix
+    vector< vector<double> > costMat = GenerateCostMat(TRx_WLs, channel_spacing);
+
+	//The greedy algorithm
+	//Use its result as the initial assignment for the SA algorithm
+	vector< pair<int, int>> assignment = AssignGreedy(costMat);
+	PrintAssignDetail(assignment, costMat);
 	double initCost = AssignCost(assignment, costMat, lambda1);
 
 	//The simulated annealing algorithm
