@@ -14,170 +14,45 @@
 #include <boost/random/mersenne_twister.hpp>
 #include <boost/random/variate_generator.hpp>
 
+#include "../shared/optimal_pairing_shared.cpp"
+
 #define CHAN_NUM 5
 #define PRINT_DB(X) printf("X: %lf\n", X);
 
 using namespace std;
 
-//tuning distance of aligning wl1 and wl2 with given wavelength grid
-double TuningDistWL(vector<double> wl1, vector<double> wl2, double channel_spacing)
-{
-    double left_WL = -1.0;
-//    printf("%d\n", (int)wl1.size());
-    assert(wl1.size() == CHAN_NUM);
-    assert(wl2.size() == CHAN_NUM);
-    for(int i = 0; i < wl1.size(); i++)
-    {
-        left_WL = max(left_WL, wl1[i] - channel_spacing*i);
-        left_WL = max(left_WL, wl2[i] - channel_spacing*i);
-    }
-    
-    double ret = 0;
-    for(int i = 0; i < wl1.size(); i++)
-    {
-        assert(left_WL + i*channel_spacing >= wl1[i]);
-        assert(left_WL + i*channel_spacing >= wl2[i]);
-        ret += (left_WL + i*channel_spacing - wl1[i]) + (left_WL + i*channel_spacing - wl2[i]);
-    }
-
-    return ret;
-}
-
-//Tuning cost with TRx1 and TRx2, each with 5x2 = 10 wavelengths 
-double TuningDistTRx(vector<double> wl1, vector<double> wl2, double channel_spacing)
-{
-   // return abs(wl1[0] - wl2[0]);
-    return TuningDistWL(vector<double> (wl1.begin(), wl1.begin() + CHAN_NUM), vector<double> (wl2.begin() + CHAN_NUM, wl2.end()), channel_spacing) + TuningDistWL(vector<double> (wl1.begin() + CHAN_NUM, wl1.end()), vector<double> (wl2.begin(), wl2.begin() + CHAN_NUM), channel_spacing);
-}
-
-//Calculate the cost for the given assignment
-double AssignCost(const vector< pair<int, int> >& assignment, const vector< vector<double> >& costMat, double lambda1)
-{
-	double A_sum = 0;
-	double A_sqr_sum = 0;
-	int pair_num = assignment.size();
-	for(int i = 0; i < assignment.size(); i++)
-	{
-		A_sum += costMat[assignment[i].first][assignment[i].second];
-		A_sqr_sum += costMat[assignment[i].first][assignment[i].second]*costMat[assignment[i].first][assignment[i].second];
-	}
-	return A_sum/pair_num + lambda1*sqrt(A_sqr_sum/pair_num - A_sum*A_sum/pair_num/pair_num);
-	
-}
-
-void PrintAssignDetail(const vector< pair<int, int> >& assignment, const vector< vector<double> >& costMat)
-{
-	for(int i = 0; i < assignment.size(); i++)
-	{
-		printf("(%d, %d): %lf\n", assignment[i].first, assignment[i].second, costMat[assignment[i].first][assignment[i].second]);
-	}
-	
-}
-
-vector< vector<double> >  ReadWLFromFile(const char* filename, int TRX_NUM)
-{
-	vector< vector<double> > TRx_WLs(TRX_NUM, vector<double> (CHAN_NUM*2,0));
-	FILE* fp = fopen(filename, "rt");
-	if(!fp)
-	{
-		printf("Open file failure\n");
-		return TRx_WLs;
-	}
-	for(int i = 0; i < TRX_NUM; i++)
-	{
-		for(int j = 0; j < CHAN_NUM*2 - 1; j++)
-		{
-			fscanf(fp, "%lf,", &TRx_WLs[i][j]);
-			//printf("%lf, ", TRx_WLs[i][j]);
-		}
-		fscanf(fp, "%lf\n", &TRx_WLs[i][CHAN_NUM*2 - 1]);
-//		printf("\n");
-	}
-	fclose(fp);	
-
-	return TRx_WLs;
-}
-
-vector< vector<double> > GenerateCostMat(const vector< vector<double> >& TRx_WLs, double channel_spacing)
-{
-	int TRX_NUM = TRx_WLs.size();
-	vector< vector<double> > costMat(TRX_NUM, vector<double> (TRX_NUM, 0));
-
-    for(int i = 0; i < TRX_NUM; i++)
-    {
-        for(int j = 0; j < TRX_NUM; j++)
-        {
-            if(i == j) continue;
-            costMat[i][j] = TuningDistTRx(TRx_WLs[i], TRx_WLs[j], channel_spacing);
-        }
-    }
-
-	return costMat;
-}
-
-vector< pair<int, int>> AssignGreedy(const vector< vector<double> >& costMat)
-{
-	int TRX_NUM = costMat.size();
-	vector< pair<int, int> > assignment (floor(TRX_NUM/2.0), pair<int, int> (-1, -1));
-	pair<int, int> currPair (-1,-1);
-    double min_cost = 1e8;
-    vector<bool> usedFlag(TRX_NUM, false);
-    for(int k = 0; k < floor(TRX_NUM/2); k++)
-    {
-        min_cost = 1e8;
-        for(int i = 0; i < TRX_NUM; i++)
-        {
-            if(usedFlag[i]) continue;
-            for(int j = 0; j < TRX_NUM; j++)
-            {
-                if(i == j || usedFlag[j]) continue;
-                if(costMat[i][j] < min_cost)
-                {
-                    min_cost = costMat[i][j];
-                    currPair.first = i;
-                    currPair.second = j;
-                }
-            }
-        }
-		usedFlag[currPair.first] = true;
-		usedFlag[currPair.second] = true;
-		assignment[k] = currPair;
-           
-    //    printf("(%d, %d): %f\n", currPair.first + 1, currPair.second + 1, min_cost, channel_spacing);
-    }
-	return assignment;
-}
-
 
 int main(int argc, char** argv)
 {
     //Configuration parameters
-    int TRX_NUM = 31;
-    double channel_spacing = 0.64*2; //0.64 nm for 80 GHz channel spacing
-	double lambda1 = 0.0;
+    int TRX_NUM = 40;
+    double channel_spacing = 0.64; //0.64 nm for 80 GHz channel spacing
+	double lambda1 = 1.0;
 //  double wl0 = 1310; //center wavelength
 //  double wl_std = 0.2;
 	
 	//Read the WLs
-	vector< vector<double> > TRx_WLs = ReadWLFromFile("../160G_WLs.csv", TRX_NUM);
+	vector< vector<double> > TRx_WLs = ReadWLFromFile("../80G_WLs.csv", TRX_NUM);
 
 	//Generate the cost matrix
-    vector< vector<double> > costMat = GenerateCostMat(TRx_WLs, channel_spacing);
+	vector< vector<double> > costMat = GenerateCostMat(TRx_WLs, channel_spacing);
 
 	//The greedy algorithm
 	//Use its result as the initial assignment for the SA algorithm
-	vector< pair<int, int>> assignment = AssignGreedy(costMat);
+	vector< pair<int, int>> assignment_greedy = AssignGreedy(costMat);
+	vector< pair<int, int>> assignment(assignment_greedy);
 	PrintAssignDetail(assignment, costMat);
 	double initCost = AssignCost(assignment, costMat, lambda1);
 
 	//The simulated annealing algorithm
-	int pair_num = floor(TRX_NUM/2.0);
+	int pair_num = assignment.size();
 	double cost0 = initCost; //the previous-state cost
 	double cost1 = 0; //the current-state cost
 	
 	double kT = initCost*0.5;		//Initial temperature for the SA algorithm
+	double kT_final = initCost*0.001; //Final temperature
 	double kT_scale_rate = 0.9;		//Cooling rate
-	int loops_per_temp = 10000;		//Loop number for each temperature to reach equilibrium
+	int loops_per_temp = 8000;		//Loop number for each temperature to reach equilibrium
 	double E_min_per_temp0 = cost0;
 	double E_min_per_temp1 = cost0;
 	double E_min_global = cost0;
@@ -186,7 +61,7 @@ int main(int argc, char** argv)
 	
     srand((int)time(0));
 	int perturb_cnt = 0;
-	while(true)
+	while(kT >= kT_final)
 	{
 		E_min_per_temp1 = cost0;
 
@@ -264,12 +139,13 @@ int main(int argc, char** argv)
 	
 		//Determine whether we continue to cool down and exit
 		//If the minimum cost or energy during the last two temperatures are still changing
-		if(abs(E_min_per_temp1 - E_min_per_temp0)/E_min_per_temp0 > E_change_criteria)
+	//	if(abs(E_min_per_temp1 - E_min_per_temp0)/E_min_per_temp0 > E_change_criteria)
 		{
-			kT = kT*kT_scale_rate;
+			;
 		}
-		else break;
-		
+	//	else break;
+			
+		kT = kT*kT_scale_rate;
 		E_min_per_temp0 = E_min_per_temp1;
 
 	}
@@ -277,8 +153,25 @@ int main(int argc, char** argv)
 	printf("Initial cost: %lf\n", initCost);
 	printf("Global min cost: %lf\n", E_min_global);
 	printf("Optimal assignment:\n");
-	PrintAssignDetail(assignment_optimal, costMat);	
+	vector<double> V_optimal = PrintAssignDetail(assignment_optimal, costMat);	
 
+	//print the nearest pairing
+	vector< pair<int, int>> nearest_pairing;
+	for(int i = 0; i < floor(TRX_NUM/2); i++)
+	{
+		nearest_pairing.push_back(pair<int, int> (2*i, 2*i + 1));
+	}
+	if(TRX_NUM/2)
+	{
+		nearest_pairing.push_back(pair<int, int> (TRX_NUM - 1, -1));
+	}
+	printf("Nearest pairing:\n");
+    vector<double> V_nearest = PrintAssignDetail(nearest_pairing, costMat);
+//	printf("Mean: %f, std: %f\n", Vmean(tuning_cost_array_nearest), Vstd(tuning_cost_array_nearest));
+	printf("Greedy pairing:\n");
+	PrintAssignDetail(assignment_greedy, costMat);
+	
+	printf("mean reduced: %f\n std reduced: %f\n", 1 - Vmean(V_optimal)/Vmean(V_nearest), 1 - Vstd(V_optimal)/Vstd(V_nearest));
 
     return 0;	
 }
